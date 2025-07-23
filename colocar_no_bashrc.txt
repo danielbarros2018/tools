@@ -1,114 +1,153 @@
-####################################################################################
-##
-## Colocar Git Branch no pronpt do bash.
-##
-####################################################################################
-
-# Obtem o nome da branch
+##########################################
+# Função: parse_git_branch_optimized
+# Descrição: Obtém o nome da branch Git atual de forma otimizada.
+#            Lida com o estado de 'HEAD detached'.
+# Retorna: O nome da branch ou "(detached-HEAD)" se não estiver em uma branch.
 function parse_git_branch_optimized() {
+    # Tenta obter o nome da branch atual. '2>/dev/null' silencia erros (ex: não é um repo Git).
     local branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    
+    # Verifica se o comando 'git rev-parse' foi bem-sucedido ($? -eq 0)
+    # e se o nome da branch não está vazio (-n "$branch_name").
     if [[ $? -eq 0 && -n "$branch_name" ]]; then
+        # Se o nome da branch for "HEAD", significa que está em um estado "detached HEAD".
         if [[ "$branch_name" == "HEAD" ]]; then
-            echo "(detached-HEAD)"
+            echo "(detached-HEAD)" # Retorna uma indicação de HEAD desanexado.
         else
-            echo "$branch_name"
+            echo "$branch_name" # Retorna o nome da branch.
         fi
     fi
 }
 
-# Verifica o status de alterações locais no Git
+# Função: has_local_changes
+# Descrição: Verifica se há alterações locais (rastreadas ou não) no repositório Git.
+# Retorna: 0 (verdadeiro) se houver alterações, 1 (falso) caso contrário.
 function has_local_changes() {
+    # Obtém o status do Git de forma "porcelain" (formato legível por máquina).
+    # '2>/dev/null' silencia erros.
     local git_status_output=$(git status --porcelain 2>/dev/null)
+    
+    # Verifica se a saída do status do Git não está vazia.
     if [[ -n "$git_status_output" ]]; then
-        return 0 # Com alterações
+        return 0 # Há alterações (retorna verdadeiro)
     else
-        return 1 # Sem alterações
+        return 1 # Não há alterações (retorna falso)
     fi
 }
 
-# Formata e colore o nome da branch com base nas regras
+# Função: get_git_prompt_status
+# Descrição: Constrói a string de status do Git para ser exibida no prompt do terminal.
+#            Inclui nome da branch, indicadores de push/pull e alterações locais.
+# Retorna: A string formatada com cores e informações do Git.
 function get_git_prompt_status() {
+    # Obtém o nome da branch usando a função otimizada.
     local branch_name=$(parse_git_branch_optimized)
     
-    # Definindo códigos de cor
-    local red_fg='\033[01;31m'
-    local green_fg='\033[01;32m'
-    local white_fg='\033[01;37m'
-    local red_bg='\033[41m'
-    local green_bg='\033[42m'
-    local reset_color='\033[0m'
+    # --- Definindo códigos de cor ANSI para o prompt ---
+    local red_fg='\033[01;31m'    # Foreground vermelho (negrito)
+    local green_fg='\033[01;32m'  # Foreground verde (negrito)
+    local white_fg='\033[01;37m'  # Foreground branco (negrito)
+    local red_bg='\033[41m'       # Background vermelho
+    local green_bg='\033[42m'     # Background verde
+    local reset_color='\033[0m'   # Reset de cor (foreground e background)
     
+    # Caracteres especiais para o Bash entender que as sequências de escape
+    # de cor não ocupam espaço no prompt, evitando problemas de quebra de linha.
     local prompt_color_start='\001' 
     local prompt_color_end='\002'   
 
+    # Só procede se um nome de branch foi obtido (está em um repositório Git).
     if [[ -n "$branch_name" ]]; then
-        local paren_color=""
-        local branch_text_color=""
-        local branch_bg_color=""
-        local extra_status=""
+        local paren_color=""         # Cor dos parênteses ao redor do status
+        local branch_text_color=""   # Cor do texto do nome da branch
+        local branch_bg_color=""     # Cor de fundo do nome da branch
+        local extra_status=""        # Indicadores de status extra (ahead/behind/untracked)
 
+        # Define a cor dos parênteses e do texto da branch com base no nome da branch.
+        # Branches "principais" (master, main, etc.) ficam em vermelho, outras em verde.
         case "$branch_name" in
             master|main|trunk|root|prod|production)
-                paren_color="$red_fg"        # Parênteses vermelhos
-                branch_text_color="$red_fg"  # Texto da branch vermelho
+                paren_color="$red_fg"
+                branch_text_color="$red_fg"
                 ;;
-            *)
-                paren_color="$green_fg"      # Parênteses verdes
-                branch_text_color="$green_fg" # Texto da branch verde
+            *) # Qualquer outra branch
+                paren_color="$green_fg"
+                branch_text_color="$green_fg"
                 ;;
         esac
 
+        # Obtém o status do Git, incluindo informações sobre o branch upstream ('-b').
         local status_output=$(git status --porcelain -b 2>/dev/null)
-        local ahead_count=0
-        local behind_count=0
-        local untracked_count=0
+        local ahead_count=0      # Contagem de commits à frente do upstream
+        local behind_count=0     # Contagem de commits atrás do upstream
+        local untracked_count=0  # Contagem de arquivos não rastreados
 
+        # Se houver saída do status (ou seja, é um repositório Git válido)
         if [[ -n "$status_output" ]]; then
-            # Parsing para ahead/behind (linha que começa com ##)
+            # Usa expressões regulares para extrair o número de commits 'ahead' (à frente)
             if [[ "$status_output" =~ \#\#\ .*\ \[ahead\ ([0-9]+)\] ]]; then
                 ahead_count="${BASH_REMATCH[1]}"
+            # Extrai o número de commits 'behind' (atrás)
             elif [[ "$status_output" =~ \#\#\ .*\ \[behind\ ([0-9]+)\] ]]; then
                 behind_count="${BASH_REMATCH[1]}"
+            # Extrai ambos os números se estiver 'ahead' e 'behind'
             elif [[ "$status_output" =~ \#\#\ .*\ \[ahead\ ([0-9]+),\ behind\ ([0-9]+)\] ]]; then
                 ahead_count="${BASH_REMATCH[1]}"
                 behind_count="${BASH_REMATCH[2]}"
             fi
 
-            # Contagem de arquivos untracked (linhas que começam com '??')
-            untracked_count=$(git ls-files --others | wc -l)
+            # Contagem de arquivos untracked (novos e não rastreados), excluindo os do .gitignore.
+            # O 'wc -l' conta as linhas (cada linha é um arquivo).
+            untracked_count=$(git ls-files --others --exclude-standard | wc -l)
         fi
 
+        # Adiciona indicadores de status extra à string 'extra_status'.
+        # '↑': commits à frente, '↓': commits atrás, '?': arquivos não rastreados.
         if [[ "$ahead_count" -gt 0 ]]; then
-            extra_status+=" ${prompt_color_start}${white_fg}${prompt_color_end}↑${ahead_count}${prompt_color_start}${reset_color}${prompt_color_end}"
+            extra_status+="${prompt_color_start}${white_fg}${reset_color}${prompt_color_end} ↑${ahead_count}${prompt_color_start}${reset_color}${prompt_color_end}"
         fi
         if [[ "$behind_count" -gt 0 ]]; then
-            extra_status+=" ${prompt_color_start}${white_fg}${prompt_color_end}↓${behind_count}${prompt_color_start}${reset_color}${prompt_color_end}"
+            extra_status+="${prompt_color_start}${white_fg}${reset_color}${prompt_color_end} ↓${behind_count}${prompt_color_start}${reset_color}${prompt_color_end}"
         fi
         if [[ "$untracked_count" -gt 0 ]]; then
-            extra_status+=" ${prompt_color_start}${white_fg}${prompt_color_end}?${untracked_count}${prompt_color_start}${reset_color}${prompt_color_end}"
+            extra_status+="${prompt_color_start}${white_fg}${reset_color}${prompt_color_end} ?${untracked_count}${prompt_color_start}${reset_color}${prompt_color_end}"
         fi
 
+        # Se houver alterações locais (arquivos modificados, adicionados ao stage, etc.)
         if has_local_changes; then
-            branch_text_color="$white_fg" # Texto da branch vira branco
+            branch_text_color="$white_fg" # O texto da branch fica branco
             
+            # Define a cor de fundo da branch com base no nome.
+            # Vermelho para branches principais, verde para outras.
             case "$branch_name" in
                 master|main|trunk|root|prod|production)
-                    branch_bg_color="$red_bg" # Fundo vermelho para master com alterações
+                    branch_bg_color="$red_bg"
                     ;;
                 *)
-                    branch_bg_color="$green_bg" # Fundo verde para outras branches com alterações
+                    branch_bg_color="$green_bg"
                     ;;
             esac
         fi
         
+        # Constrói e imprime a string final do prompt Git.
+        # Usa cores para os parênteses, nome da branch e o status extra.
         echo -e "${prompt_color_start}${paren_color}${prompt_color_end} ("\
-"${prompt_color_start}${reset_color}${branch_bg_color}${branch_text_color}${prompt_color_end}${branch_name}${extra_status}"\
+"${prompt_color_start}${reset_color}${branch_bg_color}${branch_text_color}${prompt_color_end}${branch_name}${prompt_color_end}${extra_status}"\
 "${prompt_color_start}${reset_color}${paren_color}${prompt_color_end}) "
     else
-        echo -n ""
+        echo -n "" # Se não estiver em um repositório Git, não retorna nada.
     fi
 }
 
+# Exporta a variável de ambiente PS1, que define o prompt do Bash.
+# Inclui:
+# - Chroot (se existir)
+# - Nome de usuário em verde
+# - '@' + Nome do host em branco
+# - ':'
+# - Caminho atual em azul
+# - A chamada da função 'get_git_prompt_status' para exibir o status do Git
+# - '$' (ou '#' para root)
+# - Reset de cor final
 export PS1="${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\$(get_git_prompt_status)\[\033[00m\]\$ "
-
-####################################################################################
+##########################################
